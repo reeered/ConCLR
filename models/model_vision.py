@@ -1,7 +1,7 @@
 import logging
 import torch.nn as nn
 
-from models.attention import *
+from models.attention import PositionAttention, Attention
 from models.backbone import ResTranformer
 from models.model import Model
 from models.resnet import resnet45

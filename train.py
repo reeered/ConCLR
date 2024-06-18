@@ -1,24 +1,18 @@
 import torch
-import torch.nn as nn
 import torch.optim as optim
-from torchvision import transforms
 from models.model_vision import BaseVision
-from models.decoder import AttentionDecoder
-from models.conaug import ConAug
-from models.conclr import ConCLR
 from utils import get_data_loader
 from losses import total_loss
-from utils import Config
+from utils import Config, ifnone
 
 def train():
     config = Config('configs/config.yaml')
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = BaseVision(config).to(device)
-    
-    optimizer = optim.Adam(model.parameters(), lr=1e-5)  # 减小学习率
-    
-    data_loader = get_data_loader('data/ICDAR2013+2015/train_data', batch_size=4)
-    
+    optimizer = optim.Adam(model.parameters(), lr=1e-3)
+    data_loader = get_data_loader('data/ICDAR2013+2015/train_data', batch_size=ifnone(config.dataset_train_batch_size, 4))
+
+    step = 0
     for epoch in range(10):
         model.train()
         for images, labels, view1, view2, labels1, labels2 in data_loader:
@@ -32,8 +26,11 @@ def train():
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
+            print(f'Epoch {epoch+1}, Step {step+1}, Loss: {loss.item()}')
+            step += 1
         
         print(f'Epoch {epoch+1}, Loss: {loss.item()}')
+        torch.save(model.state_dict(), f'checkpoints/model_{epoch+1}_{loss.item()}.pth')
 
 if __name__ == '__main__':
     train()
