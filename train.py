@@ -1,3 +1,5 @@
+import argparse
+
 import torch
 import torch.optim as optim
 from models.model_vision import BaseVision
@@ -5,8 +7,15 @@ from utils import get_data_loader
 from losses import total_loss
 from utils import Config, ifnone
 
+def parse_args():
+    parser = argparse.ArgumentParser(description='Train a model for vision task')
+    parser.add_argument('--config', type=str, default='configs/config.yaml', help='Path to config file (default: configs/config.yaml)')
+    args = parser.parse_args()
+    return args
+
 def train():
-    config = Config('configs/config.yaml')
+    args = parse_args()
+    config = Config(args.config)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = BaseVision(config).to(device)
     optimizer = optim.Adam(model.parameters(), lr=1e-3)
@@ -34,3 +43,4 @@ def train():
 
 if __name__ == '__main__':
     train()
+    
