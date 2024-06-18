@@ -23,17 +23,18 @@ def recognition_loss(logits_o, logits1, logits2, labels_o, labels1, labels2, ome
     return rec_loss
 
 def contrastive_loss(logits1, logits2, labels1, labels2, tau=2.0):
+    device = logits1.device
     def pair_loss(logit1, logit2, label1, label2):
         logit = torch.cat((logit1, logit2), dim=0)
         label = torch.cat((label1, label2), dim=0)
         loss_m = 0.0
         #TODO: 冗长
         for m in range(bs):
-            pos_indices = torch.where((label == label[m]) & (torch.arange(label.size(0)) != m))[0]
+            pos_indices = torch.where((label == label[m]) & (torch.arange(label.size(0), device=device) != m))[0]
             pos_logit = logit[pos_indices]
             if pos_logit.size(0) == 0:
                 continue
-            a_m = torch.where(torch.arange(label.size(0)) != m)[0]
+            a_m = torch.where(torch.arange(label.size(0), device=device) != m)[0]
 
             loss_p = 0.0
             for p in range(pos_logit.size(0)):

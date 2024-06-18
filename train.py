@@ -17,18 +17,18 @@ def train():
     
     optimizer = optim.Adam(model.parameters(), lr=1e-5)  # 减小学习率
     
-    data_loader = get_data_loader('data/ICDAR2013+2015/train_data', batch_size=32)
+    data_loader = get_data_loader('data/ICDAR2013+2015/train_data', batch_size=4)
     
     for epoch in range(10):
         model.train()
         for images, labels, view1, view2, labels1, labels2 in data_loader:
             # images = images.to(device)
             # view1, view2, labels1, labels2 = conaug.augment(images, labels)
-            res_o = model(images)
-            res1 = model(view1)
-            res2 = model(view2)
+            res_o = model(images.to(device))
+            res1 = model(view1.to(device))
+            res2 = model(view2.to(device))
             
-            loss = total_loss(res_o['logits'], res1['logits'], res2['logits'], labels, labels1, labels2)
+            loss = total_loss(res_o['logits'], res1['logits'], res2['logits'], labels.to(device), labels1.to(device), labels2.to(device))
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
