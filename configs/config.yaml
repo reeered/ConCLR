@@ -6,14 +6,17 @@ global:
   seed: ~
  
 dataset:
+  root: 'data/ICDAR2013+2015/train_data'
   train: {
+    labels: 'data/ICDAR2013+2015/train.txt',
     roots: ['data/training/MJ/MJ_train/', 
             'data/training/MJ/MJ_test/', 
             'data/training/MJ/MJ_valid/', 
             'data/training/ST'],
-    batch_size: 384
+    batch_size: 8
   }
   test: {
+    labels: 'data/ICDAR2013+2015/test.txt',
     roots: ['data/evaluation/IIIT5k_3000', 
             'data/evaluation/SVT', 
             'data/evaluation/SVTP',
@@ -22,7 +25,6 @@ dataset:
             'data/evaluation/CUTE80'],
     batch_size: 384
   }
-  data_aug: True
   multiscales: False
   num_workers: 14
 
@@ -48,17 +50,8 @@ optimizer:
   }
 
 model:
-  name: 'modules.model_abinet_iter.ABINetIterModel'
-  iter_size: 3
-  ensemble: ''
-  use_vision: False
-  vision: {
-    # checkpoint: workdir/pretrain-vision-model/best-pretrain-vision-model.pth,
-    loss_weight: 1.,
-    attention: 'position',
-    backbone: 'transformer',
-    backbone_ln: 3,
-  }
-  alignment: {
-    loss_weight: 1.,
-  }
+  # checkpoint: checkpoints/best-pretrain-vision-model.pth
+  loss_weight: 1
+  attention: 'position'
+  backbone: 'transformer'
+  backbone_ln: 3

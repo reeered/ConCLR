@@ -24,7 +24,7 @@ dataset:
   }
   charset_path: data/charset_36.txt
   num_workers: 4
-  max_length: 31
+  max_length: 25
   image_height: 32
   image_width: 128
   case_sensitive: False

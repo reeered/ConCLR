@@ -1,11 +1,11 @@
 import logging
 import os
 import time
+import yaml
 
 import cv2
 import numpy as np
 import torch
-import yaml
 from matplotlib import colors
 from matplotlib import pyplot as plt
 from PIL import Image
@@ -13,8 +13,6 @@ from torch import Tensor, nn
 import torch.nn.functional as F
 from torch.utils.data import ConcatDataset, Dataset, DataLoader
 from torchvision import transforms
-
-from models.conaug import ConAug
 
 def ifnone(a, b):
     return b if a is None else a
@@ -313,24 +311,41 @@ class MyConcatDataset(ConcatDataset):
 
 
 class SceneTextDataset(Dataset):
-    def __init__(self, data_dir, transform=None, charset_path: str = 'data/charset_36.txt', max_length: int = 32):
+    def __init__(self, data_dir, labels_path, transform=None, charset_path: str = 'data/charset_36.txt', max_length: int = 26):
         self.data_dir = data_dir
         self.transform = transform
-        self.images = [os.path.join(data_dir, img) for img in os.listdir(data_dir) if img.endswith('.jpg')]
+        self.images, self.labels = [], []
+        with open(labels_path, 'r') as f:
+            lines = f.readlines()
+
+        for line in lines:
+            img, label = line.strip().split('\t')
+            self.images.append(img)
+            self.labels.append(label)
+
+        # self.images = [os.path.join(data_dir, img) for img in os.listdir(data_dir) if img.endswith('.jpg')]
         # self.charset = CharsetMapper(charset_path, max_length=max_length + 1)
         #TODO: 原来的代码有max_length+1
         self.charset = CharsetMapper(charset_path, max_length=max_length)
-        self.conaug = ConAug(transform)
 
     def __len__(self):
         return len(self.images)
     
     def __getitem__(self, idx):
-        img_path = self.images[idx]
-        gt_path = os.path.join(os.path.dirname(img_path), 'gt_' + os.path.basename(img_path).replace('.jpg', '.txt'))
-        
+        img_path = os.path.join(self.data_dir, self.images[idx])
         image = Image.open(img_path).convert('RGB')
-        text = self.parse_gt_file(gt_path)
+
+        # original text
+        text_o = self.labels[idx]
+        # reduced by max_length text
+        text = ''
+        if text_o != '###':
+            for c in text_o:
+                if len(text) >= self.charset.max_length / 2:
+                    raise Exception("wrong")
+                if len(text) < self.charset.max_length / 2 and c in self.charset.label_to_char.values():
+                    text += c
+
         label = self.charset.get_labels(text, padding=False)
         label = torch.tensor(label).to(dtype=torch.long)
         
@@ -345,9 +360,9 @@ class SceneTextDataset(Dataset):
         with open(gt_path, 'r', encoding='utf8') as f:
             for line in f.readlines():
                 parts = line.strip().split(',')
-                if len(parts) > 8:  # 确保有标签存在
+                if len(parts) > 8:  # make sure label in
                     text_o = parts[8]
-                    if text_o != '###':  # 忽略无效标签
+                    if text_o != '###':
                         for c in text_o:
                             # 考虑到需要拼接，字符串长度不超过最大长度的一半
                             if len(text) < self.charset.max_length / 2 and c in self.charset.label_to_char.values():
@@ -358,20 +373,19 @@ class SceneTextDataset(Dataset):
                         # labels.append(label_tensor)
         return text
 
-def get_data_loader(data_dir, batch_size, max_length=32, shuffle=True):
+def get_data_loader(data_dir, labels_path, batch_size, max_length: int=26, shuffle=True):
     transform = transforms.Compose([
         transforms.Resize((32, 128)),
         transforms.ToTensor(),
         transforms.Normalize((0.5,), (0.5,))
     ])
-    dataset = SceneTextDataset(data_dir, transform)
+    dataset = SceneTextDataset(data_dir, labels_path, transform, max_length=max_length)
     return DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, collate_fn=collate_wrapper(max_length))
 
 def collate_wrapper(max_length):
     def collate_fn(batch):
         images, labels = zip(*batch)
         images = torch.stack(images, 0)
-        #
 
         bs = images.size(0)
         perm1 = torch.randperm(bs)
@@ -387,7 +401,7 @@ def collate_wrapper(max_length):
             labels2.append(F.pad(label_cat, (0, max_length - label_cat.size(0))))
             labels_pad.append(F.pad(labels[i], (0, max_length - labels[i].size(0))))
 
-        # 图像缩放，保证模型输入大小一致
+        # image scaling
         view1 = F.interpolate(torch.cat((images, images[perm1]), dim=3), (32, 128))
         view2 = F.interpolate(torch.cat((images, images[perm2]), dim=3), (32, 128))
         # labels1 = torch.cat((labels, labels[perm1]), dim=1)
@@ -399,4 +413,3 @@ def collate_wrapper(max_length):
 
         return images, labels, view1, view2, labels1, labels2
     return collate_fn
-        # return images, labels

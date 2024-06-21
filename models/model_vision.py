@@ -10,31 +10,31 @@ from utils import ifnone
 class BaseVision(Model):
     def __init__(self, config):
         super().__init__(config)
-        self.loss_weight = ifnone(config.model_vision_loss_weight, 1.0)
-        self.out_channels = ifnone(config.model_vision_d_model, 512)
+        self.loss_weight = ifnone(config.model_loss_weight, 1.0)
+        self.out_channels = ifnone(config.model_d_model, 512)
 
-        if config.model_vision_backbone == 'transformer':
+        if config.model_backbone == 'transformer':
             self.backbone = ResTranformer(config)
         else: self.backbone = resnet45()
         
-        if config.model_vision_attention == 'position':
-            mode = ifnone(config.model_vision_attention_mode, 'nearest')
+        if config.model_attention == 'position':
+            mode = ifnone(config.model_attention_mode, 'nearest')
             self.attention = PositionAttention(
                 max_length=config.dataset_max_length + 1,  # additional stop token
                 mode=mode,
             )
-        elif config.model_vision_attention == 'attention':
+        elif config.model_attention == 'attention':
             self.attention = Attention(
                 max_length=config.dataset_max_length + 1,  # additional stop token
                 n_feature=8*32,
             )
         else:
-            raise Exception(f'{config.model_vision_attention} is not valid.')
+            raise Exception(f'{config.model_attention} is not valid.')
         self.cls = nn.Linear(self.out_channels, self.charset.num_classes)
 
-        if config.model_vision_checkpoint is not None:
-            logging.info(f'Read vision model from {config.model_vision_checkpoint}.')
-            self.load(config.model_vision_checkpoint)
+        if config.model_checkpoint is not None:
+            logging.info(f'Read model from {config.model_checkpoint}.')
+            self.load(config.model_checkpoint)
 
     def forward(self, images, *args):
         features = self.backbone(images)  # (N, E, H, W)
