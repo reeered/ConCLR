@@ -200,9 +200,6 @@ class Config(object):
                 else:
                     if k == 'phase':
                         assert v in ['train', 'test']
-                    if k == 'stage':
-                        assert v in ['pretrain-vision', 'pretrain-language',
-                                     'train-semi-super', 'train-super']
                     self.__setattr__(f'{prefix}{k}', v)
 
         assert os.path.exists(config_path), '%s does not exists!' % config_path
@@ -319,8 +316,15 @@ class SceneTextDataset(Dataset):
             lines = f.readlines()
 
         for line in lines:
-            img, label = line.strip().split('\t')
-            self.images.append(img)
+            # img, label = line.strip().split('\t')
+            # self.images.append(img)
+            # self.labels.append(label)
+
+            parts = line.strip().split()
+            assert len(parts) == 2
+            img_file, _ = parts
+            label = img_file.split('_')[1].lower()
+            self.images.append(os.path.join(data_dir, img_file))
             self.labels.append(label)
 
         # self.images = [os.path.join(data_dir, img) for img in os.listdir(data_dir) if img.endswith('.jpg')]
@@ -332,8 +336,14 @@ class SceneTextDataset(Dataset):
         return len(self.images)
     
     def __getitem__(self, idx):
-        img_path = os.path.join(self.data_dir, self.images[idx])
-        image = Image.open(img_path).convert('RGB')
+        img_path = self.images[idx]
+        # img_path = os.path.join(self.data_dir, self.images[idx])
+        try:
+            image = Image.open(img_path).convert('RGB')
+        except OSError as e:
+            logging.error(e)
+            logging.error(f'Broken image: {img_path}')
+            raise Exception(f"img: {img_path}")
 
         # original text
         text_o = self.labels[idx]
@@ -342,17 +352,19 @@ class SceneTextDataset(Dataset):
         if text_o != '###':
             for c in text_o:
                 if len(text) >= self.charset.max_length / 2:
-                    raise Exception("wrong")
-                if len(text) < self.charset.max_length / 2 and c in self.charset.label_to_char.values():
+                    raise Exception("Exceed max length")
+                elif len(text) < self.charset.max_length / 2 and c in self.charset.label_to_char.values():
                     text += c
 
+        if text != text_o:
+            raise Exception(f"{text_o} != {text}, img: {img_path}")
         label = self.charset.get_labels(text, padding=False)
         label = torch.tensor(label).to(dtype=torch.long)
         
         if self.transform:
             image = self.transform(image)
         
-        return image, label
+        return image, label, img_path
     
     #TODO: 修改处理逻辑
     def parse_gt_file(self, gt_path):
@@ -373,18 +385,19 @@ class SceneTextDataset(Dataset):
                         # labels.append(label_tensor)
         return text
 
-def get_data_loader(data_dir, labels_path, batch_size, max_length: int=26, shuffle=True):
+def get_data_loader(data_dir, labels_path, batch_size, max_length: int=26, charset_path: str = 'data/charset_36.txt', shuffle=True):
     transform = transforms.Compose([
         transforms.Resize((32, 128)),
         transforms.ToTensor(),
         transforms.Normalize((0.5,), (0.5,))
     ])
-    dataset = SceneTextDataset(data_dir, labels_path, transform, max_length=max_length)
+    dataset = SceneTextDataset(data_dir, labels_path, transform, max_length=max_length, charset_path=charset_path)
     return DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, collate_fn=collate_wrapper(max_length))
 
 def collate_wrapper(max_length):
     def collate_fn(batch):
-        images, labels = zip(*batch)
+        # charset = CharsetMapper('data/charset_36.txt', max_length=max_length)
+        images, labels, img_paths = zip(*batch)
         images = torch.stack(images, 0)
 
         bs = images.size(0)

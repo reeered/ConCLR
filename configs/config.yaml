@@ -1,14 +1,13 @@
 global:
-  name: train-abinet
+  name: ConCLR_SGD_5e-3
   phase: train
-  stage: train-super
-  workdir: workdir
+  workdir: runs
   seed: ~
  
 dataset:
-  root: 'data/ICDAR2013+2015/train_data'
+  root: 'data/mnt/ramdisk/max/90kDICT32px'
   train: {
-    labels: 'data/ICDAR2013+2015/train.txt',
+    labels: 'data/mnt/ramdisk/max/90kDICT32px/annotation_train_ml13.txt',
     roots: ['data/training/MJ/MJ_train/', 
             'data/training/MJ/MJ_test/', 
             'data/training/MJ/MJ_valid/', 
@@ -16,7 +15,7 @@ dataset:
     batch_size: 8
   }
   test: {
-    labels: 'data/ICDAR2013+2015/test.txt',
+    labels: 'data/mnt/ramdisk/max/90kDICT32px/annotation_test_ml13.txt',
     roots: ['data/evaluation/IIIT5k_3000', 
             'data/evaluation/SVT', 
             'data/evaluation/SVTP',
@@ -50,7 +49,7 @@ optimizer:
   }
 
 model:
-  # checkpoint: checkpoints/best-pretrain-vision-model.pth
+  checkpoint: checkpoints/best-pretrain-vision-model.pth
   loss_weight: 1
   attention: 'position'
   backbone: 'transformer'

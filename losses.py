@@ -11,34 +11,32 @@ def recognition_loss(logits_o, logits1, logits2, labels_o, labels1, labels2, ome
     rec_loss = (loss_o + omega * (loss1 + loss2)) / bs
     return rec_loss
 
+# calculate contrastive loss with iteration
 def contrastive_loss_o(logits1, logits2, labels1, labels2, tau=2.0):
     device = logits1.device
     def pair_loss(logit1, logit2, label1, label2):
         logit = torch.cat((logit1, logit2), dim=0)
         label = torch.cat((label1, label2), dim=0)
         loss_m = 0.0
-        #TODO: 冗长
         for m in range(label.size(0)):
             pos_indices = torch.where((label == label[m]) & (torch.arange(label.size(0), device=device) != m))[0]
             pos_logit = logit[pos_indices]
             if pos_logit.size(0) == 0:
                 continue
             a_m = torch.where(torch.arange(label.size(0), device=device) != m)[0]
-
+            similarity = (logit[m] @ logit[a_m].T) / tau
+            b_max = similarity.max()
             loss_p = 0.0
             for p in pos_indices:
-                loss_p -= torch.log(torch.exp(torch.dot(logit[m], logit[p]) / tau))
+                loss_p -= torch.dot(logit[m], logit[p]) / tau - b_max
                 esum = 0
                 for a in a_m:
-                    esum += torch.exp(torch.dot(logit[m], logit[a]) / tau)
-                    # loss_p += torch.log(torch.exp(torch.dot(logit[m], logit[a]) / tau))
+                    esum += torch.exp(torch.dot(logit[m], logit[a]) / tau - b_max)
                 loss_p += torch.log(esum)
             loss_m += loss_p / pos_logit.size(0)
-
         return loss_m
 
     bs = logits1.size(0)
-
     loss = 0.0
     for t in range(bs):
         loss += pair_loss(logits1[t], logits2[t], labels1[t], labels2[t])
@@ -46,45 +44,15 @@ def contrastive_loss_o(logits1, logits2, labels1, labels2, tau=2.0):
     loss = loss / bs
     return loss
 
-def contrastive_loss_o1(logits1, logits2, labels1, labels2, tau=2.0):
-    device = logits1.device
-    bs = logits1.size(0)
-
-    loss = 0.0
-    labels = torch.cat((labels1, labels2), dim=1)
-    logits = torch.cat((logits1, logits2), dim=1)
-    similarity = torch.bmm(logits, logits.transpose(2, 1))
-    assert similarity.shape == (bs, logits.size(1), logits.size(1))
-    mat = torch.log(torch.exp(similarity / tau))
-    a1, a2 = 0.0, 0.0
-    for t in range(bs):
-        label = labels[t]
-        for m in range(label.size(0)):
-            pos_indices = torch.where((label == label[m]) & (torch.arange(label.size(0), device=device) != m))[0]
-            if pos_indices.size(0) == 0:
-                continue
-            a_m = torch.where(torch.arange(label.size(0), device=device) != m)[0]
-
-            a1 -= mat[t][m][pos_indices].sum() / pos_indices.size(0)
-            a2 += mat[t][m][a_m].sum()
-
-            loss += (- mat[t][m][pos_indices].sum() + mat[t][m][a_m].sum() * pos_indices.size(0)) / pos_indices.size(0)
-
-    loss = loss / bs
-    return loss
-
+# calculate contrastive loss with matrix operation
 def contrastive_loss(logits1, logits2, labels1, labels2, tau=2.0):
-    def standardize(tensor):
-        return (tensor - tensor.mean()) / tensor.std()
-
-    logits1 = standardize(logits1)
-    logits2 = standardize(logits2)
-
     device = logits1.device
     bs = logits1.size(0)
 
     labels = torch.cat((labels1, labels2), dim=1)
     logits = torch.cat((logits1, logits2), dim=1)
+    # calculate similarity
+    sim = torch.bmm(logits, logits.transpose(2, 1)) / tau
 
     bs, seq_len = labels.shape
     
@@ -93,22 +61,26 @@ def contrastive_loss(logits1, logits2, labels1, labels2, tau=2.0):
 
     am = ~torch.eye(seq_len, dtype=bool, device=device).unsqueeze(0).expand(bs, -1, -1)
     pm = (labels_expanded == labels_expanded_T) & am
-    
-    similarity = torch.bmm(logits, logits.transpose(2, 1))
-    m1 = similarity / tau
-
-    #TODO: overflow
-    # m1 = m1 / 100
-
-    me = torch.exp(m1)
-
+    # num of positive pairs for m
     nnz = pm.sum(dim=1).unsqueeze(2)
-    p = torch.masked_fill(m1, ~pm, 0)
-    a = torch.masked_fill(me, ~am, 0)
-    a1 = torch.where(nnz != 0, p / nnz, torch.zeros_like(p)).sum()
-    # TODO: sum may be zero
-    a2 = torch.log(torch.masked_fill(a, ~nnz.expand(bs, seq_len, seq_len).bool(), 0).sum(dim=1)).sum()
-    return (-a1 + a2) / bs
+    # mask m without P(m)
+    am_nz = am & nnz.expand(bs, seq_len, seq_len).bool()
+    sim = torch.masked_fill(sim, ~am_nz, 0)
+    # prevent overflow
+    sim = sim - sim.max(dim=2, keepdim=True)[0]
+
+    sim_exp = torch.exp(sim)
+    sim_p = torch.masked_fill(sim, ~pm, 0)  # similarity of positive pairs
+    sim_a = torch.masked_fill(sim_exp, ~am, 0)  # similarity of all pairs (exp)
+
+    # sum of positive pairs
+    sum_p = torch.where(nnz != 0, sim_p / nnz, 0).sum()
+    # sum of all pairs (sum(exp))
+    sum_a_exp = torch.masked_fill(sim_a, ~am_nz, 0).sum(dim=2)
+    # sum of all pairs (sum(log(sum(exp))))
+    sum_a = torch.where(sum_a_exp != 0, torch.log(sum_a_exp), 0).sum()
+    loss = (-sum_p + sum_a) / bs
+    return loss
 
 def total_loss(logits_o, logits1, logits2, labels_o, labels1, labels2, omega=0.5, tau=2.0, lambda_=0.2):
     rec_loss = recognition_loss(logits_o, logits1, logits2, labels_o, labels1, labels2, omega)
@@ -121,38 +93,27 @@ if __name__ == '__main__':
     bs = 2
     ll = 4
     cc = 2
-    test_labels = torch.randint(bs, (bs, ll))
     test_logits1 = torch.randn(bs, ll, cc)
     test_labels1 = torch.randint(bs, (bs, ll))
     test_logits2 = torch.randn(bs, ll, cc)
     test_labels2 = torch.randint(bs, (bs, ll))
 
-    test_labels = torch.randint(bs, (bs, ll))
-    test_logits1 = torch.ones(bs, ll, cc) / 2
-    test_labels1 = torch.randint(bs, (bs, ll))
-    test_logits2 = torch.ones(bs, ll, cc) / 2
-    test_labels2 = torch.randint(bs, (bs, ll))
-
-
-    test_logits1 = torch.tensor([[[1.0, 2.0], [15.0, 14.0]], 
-                            [[3.0, 4.0], [7.0, 8.0]]])
-    test_logits2 = torch.tensor([[[15.0, 16.0], [11.0, 12.0]], 
-                            [[13.0, 14.0], [30.0, 4.0]]])
+    test_logits1 = torch.tensor([[[1.0, 2.0], [2.0, 3.0]], 
+                            [[3.0, 4.0], [7.0, 5.0]]])
+    test_logits2 = torch.tensor([[[2.0, 7.0], [1.0, 4.0]], 
+                            [[3.0, 5.0], [3.0, 4.0]]])
     test_labels1 = torch.tensor([[0, 1], [4, 3]])
-    test_labels2 = torch.tensor([[1, 5], [6, 4]])
-
+    test_labels2 = torch.tensor([[1, 5], [4, 4]])
+    clr_loss_expected = 12.54502
 
     start = time.time()
     loss = contrastive_loss_o(test_logits1, test_logits2, test_labels1, test_labels2)
     end = time.time()
     print(f'contrastive_loss_o time used: {end - start}, loss: {loss}')
-
-    # start = time.time()
-    # loss = contrastive_loss_o1(test_logits1, test_logits2, test_labels1, test_labels2)
-    # end = time.time()
-    # print(f'contrastive_loss_o1 time used: {end - start}, loss: {loss}')
+    assert abs(loss.item() - clr_loss_expected) < 5e-6
 
     start = time.time()
     loss = contrastive_loss(test_logits1, test_logits2, test_labels1, test_labels2)
     end = time.time()
     print(f'contrastive_loss time used: {end - start}, loss: {loss}')
+    assert abs(loss.item() - clr_loss_expected) < 5e-6

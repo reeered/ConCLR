@@ -1,8 +1,7 @@
 global:
   name: exp
   phase: train
-  stage: pretrain-vision
-  workdir: /tmp/workdir
+  workdir: runs
   seed: ~
  
 dataset:
