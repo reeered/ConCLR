@@ -1,17 +1,12 @@
 import logging
 import os
-import time
 import yaml
 
-import cv2
-import numpy as np
-import torch
-from matplotlib import colors
-from matplotlib import pyplot as plt
 from PIL import Image
-from torch import Tensor, nn
+import torch
+from torch import Tensor
 import torch.nn.functional as F
-from torch.utils.data import ConcatDataset, Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
 
 def ifnone(a, b):
@@ -120,47 +115,6 @@ class CharsetMapper(object):
         return self.get_labels(self.alphabets, padding=False)
 
 
-class Timer(object):
-    """A simple timer."""
-    def __init__(self):
-        self.data_time = 0.
-        self.data_diff = 0.
-        self.data_total_time = 0.
-        self.data_call = 0
-        self.running_time = 0.
-        self.running_diff = 0.
-        self.running_total_time = 0.
-        self.running_call = 0
-
-    def tic(self):
-        self.start_time = time.time()
-        self.running_time = self.start_time
-
-    def toc_data(self):
-        self.data_time = time.time()
-        self.data_diff = self.data_time - self.running_time
-        self.data_total_time += self.data_diff
-        self.data_call += 1
-
-    def toc_running(self):
-        self.running_time = time.time()
-        self.running_diff = self.running_time - self.data_time
-        self.running_total_time += self.running_diff
-        self.running_call += 1
-
-    def total_time(self):
-        return self.data_total_time + self.running_total_time
-
-    def average_time(self):
-        return  self.average_data_time() + self.average_running_time()
-
-    def average_data_time(self):
-        return self.data_total_time / (self.data_call or 1)
-
-    def average_running_time(self):
-        return self.running_total_time / (self.running_call or 1)
-
-
 class Logger(object):
     _handle = None
     _root = None
@@ -230,85 +184,10 @@ class Config(object):
             str += f'\t({i}): {k} = {v}\n'
         str += ')'
         return str
+    
 
-def blend_mask(image, mask, alpha=0.5, cmap='jet', color='b', color_alpha=1.0):
-    # normalize mask
-    mask = (mask-mask.min()) / (mask.max() - mask.min() + np.finfo(float).eps)
-    if mask.shape != image.shape:
-        mask = cv2.resize(mask,(image.shape[1], image.shape[0]))
-    # get color map
-    color_map = plt.get_cmap(cmap)
-    mask = color_map(mask)[:,:,:3]
-    # convert float to uint8
-    mask = (mask * 255).astype(dtype=np.uint8)
-
-    # set the basic color
-    basic_color = np.array(colors.to_rgb(color)) * 255 
-    basic_color = np.tile(basic_color, [image.shape[0], image.shape[1], 1]) 
-    basic_color = basic_color.astype(dtype=np.uint8)
-    # blend with basic color
-    blended_img = cv2.addWeighted(image, color_alpha, basic_color, 1-color_alpha, 0)
-    # blend with mask
-    blended_img = cv2.addWeighted(blended_img, alpha, mask, 1-alpha, 0)
-
-    return blended_img
-
-def onehot(label, depth, device=None):
-    """ 
-    Args:
-        label: shape (n1, n2, ..., )
-        depth: a scalar
-
-    Returns:
-        onehot: (n1, n2, ..., depth)
-    """
-    if not isinstance(label, torch.Tensor):
-        label = torch.tensor(label, device=device)
-    onehot = torch.zeros(label.size() + torch.Size([depth]), device=device)
-    onehot = onehot.scatter_(-1, label.unsqueeze(-1), 1)
-
-    return onehot
-
-class MyDataParallel(nn.DataParallel):
-
-    def gather(self, outputs, target_device):
-        r"""
-        Gathers tensors from different GPUs on a specified device
-        (-1 means the CPU).
-        """
-        def gather_map(outputs):
-            out = outputs[0]
-            if isinstance(out, (str, int, float)):
-                return out
-            if isinstance(out, list) and isinstance(out[0], str):
-                return [o for out in outputs for o in out]
-            if isinstance(out, torch.Tensor):
-                return torch.nn.parallel._functions.Gather.apply(target_device, self.dim, *outputs)
-            if out is None:
-                return None
-            if isinstance(out, dict):
-                if not all((len(out) == len(d) for d in outputs)):
-                    raise ValueError('All dicts must have the same number of keys')
-                return type(out)(((k, gather_map([d[k] for d in outputs]))
-                                for k in out))
-            return type(out)(map(gather_map, zip(*outputs)))
-
-        # Recursive function calls like this create reference cycles.
-        # Setting the function to None clears the refcycle.
-        try:
-            res = gather_map(outputs)
-        finally:
-            gather_map = None
-        return res
-
-
-class MyConcatDataset(ConcatDataset):
-    def __getattr__(self, k): 
-        return getattr(self.datasets[0], k)
-
-
-class SceneTextDataset(Dataset):
-    def __init__(self, data_dir, labels_path, transform=None, charset_path: str = 'data/charset_36.txt', max_length: int = 26):
+class ConCLRDataset(Dataset):
+    def __init__(self, data_dir: str, labels_path: str, transform=None, charset_path: str='data/charset_36.txt', max_length: int = 26):
         self.data_dir = data_dir
         self.transform = transform
         self.images, self.labels = [], []
@@ -316,10 +195,6 @@ class SceneTextDataset(Dataset):
             lines = f.readlines()
 
         for line in lines:
-            # img, label = line.strip().split('\t')
-            # self.images.append(img)
-            # self.labels.append(label)
-
             parts = line.strip().split()
             assert len(parts) == 2
             img_file, _ = parts
@@ -327,9 +202,6 @@ class SceneTextDataset(Dataset):
             self.images.append(os.path.join(data_dir, img_file))
             self.labels.append(label)
 
-        # self.images = [os.path.join(data_dir, img) for img in os.listdir(data_dir) if img.endswith('.jpg')]
-        # self.charset = CharsetMapper(charset_path, max_length=max_length + 1)
-        #TODO: 原来的代码有max_length+1
         self.charset = CharsetMapper(charset_path, max_length=max_length)
 
     def __len__(self):
@@ -341,88 +213,81 @@ class SceneTextDataset(Dataset):
         try:
             image = Image.open(img_path).convert('RGB')
         except OSError as e:
+            #TODO: 数据集有部分图像损坏
             logging.error(e)
             logging.error(f'Broken image: {img_path}')
-            raise Exception(f"img: {img_path}")
+            image = Image.open(self.images[idx+1]).convert('RGB')
+            label = self.charset.get_labels(self.labels[idx+1], padding=False)
+            label = torch.tensor(label).to(dtype=torch.long)
+            return self.transform(image), label
+            # raise Exception(f'Broken image: {img_path}')
 
         # original text
-        text_o = self.labels[idx]
-        # reduced by max_length text
-        text = ''
-        if text_o != '###':
-            for c in text_o:
-                if len(text) >= self.charset.max_length / 2:
-                    raise Exception("Exceed max length")
-                elif len(text) < self.charset.max_length / 2 and c in self.charset.label_to_char.values():
-                    text += c
-
-        if text != text_o:
-            raise Exception(f"{text_o} != {text}, img: {img_path}")
+        text = self.labels[idx]
+        # convert text to label
         label = self.charset.get_labels(text, padding=False)
         label = torch.tensor(label).to(dtype=torch.long)
         
         if self.transform:
             image = self.transform(image)
         
-        return image, label, img_path
-    
-    #TODO: 修改处理逻辑
-    def parse_gt_file(self, gt_path):
-        text = ''
-        with open(gt_path, 'r', encoding='utf8') as f:
-            for line in f.readlines():
-                parts = line.strip().split(',')
-                if len(parts) > 8:  # make sure label in
-                    text_o = parts[8]
-                    if text_o != '###':
-                        for c in text_o:
-                            # 考虑到需要拼接，字符串长度不超过最大长度的一半
-                            if len(text) < self.charset.max_length / 2 and c in self.charset.label_to_char.values():
-                                text += c
-                        # return label
-                        # label_indices = vocab.encode(label)
-                        # label_tensor = torch.tensor(label_indices, dtype=torch.long)
-                        # labels.append(label_tensor)
-        return text
+        return image, label
 
-def get_data_loader(data_dir, labels_path, batch_size, max_length: int=26, charset_path: str = 'data/charset_36.txt', shuffle=True):
+def get_data_loader(data_dir: str, labels_path: str, batch_size: int, max_length: int=26, charset_path: str = 'data/charset_36.txt', shuffle=True, conaug=True):
+    """Get ConCLR Dataloader.
+
+    Args:
+        data_dir (str): Directory of images.
+        labels_path (str): Path to labels file.
+        batch_size (int): Batch size.
+        max_length (int, optional): Max length of labels. Defaults to 26.
+        charset_path (str, optional): Path to charset file. Defaults to 'data/charset_36.txt'.
+        shuffle (bool, optional): Shuffle data. Defaults to True.
+        conaug (bool, optional): Use ConCLR augmentation. Defaults to True.
+
+    Returns:
+        torch.utils.data.DataLoader: Dataloader
+    """
     transform = transforms.Compose([
         transforms.Resize((32, 128)),
         transforms.ToTensor(),
         transforms.Normalize((0.5,), (0.5,))
     ])
-    dataset = SceneTextDataset(data_dir, labels_path, transform, max_length=max_length, charset_path=charset_path)
-    return DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, collate_fn=collate_wrapper(max_length))
+    dataset = ConCLRDataset(data_dir, labels_path, transform, max_length=max_length, charset_path=charset_path)
+    return DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, collate_fn=collate_wrapper(max_length, conaug))
 
-def collate_wrapper(max_length):
+def collate_wrapper(max_length, conaug):
     def collate_fn(batch):
-        # charset = CharsetMapper('data/charset_36.txt', max_length=max_length)
-        images, labels, img_paths = zip(*batch)
+        """Concat images and labels in a batch."""
+        images, labels = zip(*batch)
         images = torch.stack(images, 0)
+        if conaug:
+            bs = images.size(0)
+            perm1 = torch.randperm(bs)
+            perm2 = torch.randperm(bs)
 
-        bs = images.size(0)
-        perm1 = torch.randperm(bs)
-        perm2 = torch.randperm(bs)
+            labels_pad = []
+            labels1 = []
+            labels2 = []
+            for i in range(bs):
+                # label padding
+                label_cat = torch.cat((labels[i], labels[perm1[i]]))
+                labels1.append(F.pad(label_cat, (0, max_length - label_cat.size(0))))
+                label_cat = torch.cat((labels[i], labels[perm2[i]]))
+                labels2.append(F.pad(label_cat, (0, max_length - label_cat.size(0))))
+                labels_pad.append(F.pad(labels[i], (0, max_length - labels[i].size(0))))
 
-        labels_pad = []
-        labels1 = []
-        labels2 = []
-        for i in range(bs):
-            label_cat = torch.cat((labels[i], labels[perm1[i]]))
-            labels1.append(F.pad(label_cat, (0, max_length - label_cat.size(0))))
-            label_cat = torch.cat((labels[i], labels[perm2[i]]))
-            labels2.append(F.pad(label_cat, (0, max_length - label_cat.size(0))))
-            labels_pad.append(F.pad(labels[i], (0, max_length - labels[i].size(0))))
+            # image scaling
+            view1 = F.interpolate(torch.cat((images, images[perm1]), dim=3), (32, 128))
+            view2 = F.interpolate(torch.cat((images, images[perm2]), dim=3), (32, 128))
 
-        # image scaling
-        view1 = F.interpolate(torch.cat((images, images[perm1]), dim=3), (32, 128))
-        view2 = F.interpolate(torch.cat((images, images[perm2]), dim=3), (32, 128))
-        # labels1 = torch.cat((labels, labels[perm1]), dim=1)
-        # labels2 = torch.cat((labels, labels[perm2]), dim=1)
-        # F.pad(labels1, (0, max_length - labels1.size(1)))
-        labels = torch.stack(labels_pad, 0)
-        labels1 = torch.stack(labels1, 0)
-        labels2 = torch.stack(labels2, 0)
+            labels = torch.stack(labels_pad, 0)
+            labels1 = torch.stack(labels1, 0)
+            labels2 = torch.stack(labels2, 0)
 
-        return images, labels, view1, view2, labels1, labels2
+            return images, labels, view1, view2, labels1, labels2
+        else:
+            labels = [F.pad(label, (0, max_length - label.size(0))) for label in labels]
+            labels = torch.stack(labels, 0)
+            return images, labels
     return collate_fn

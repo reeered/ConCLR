@@ -1,5 +1,6 @@
 import argparse
 import logging
+import os
 
 import torch
 import torch.optim as optim
@@ -16,9 +17,36 @@ def parse_args():
     args = parser.parse_args()
     return args
 
+def get_optimizer(model, config):
+    optimizer_config = config.optimizer
+    optimizer_type = optimizer_config['type']
+    if optimizer_type == 'Adadelta':
+        optimizer = optim.Adadelta(model.parameters(), lr=optimizer_config['lr'], )
+    elif optimizer_type == 'Adam':
+        optimizer = optim.Adam(model.parameters(), lr=optimizer_config['lr'], betas=optimizer_config['args_betas'])
+    elif optimizer_type == 'SGD':
+        optimizer = optim.SGD(model.parameters(), lr=optimizer_config['lr'])
+    else:
+        raise ValueError(f"Unsupported optimizer type: {optimizer_type}")
+    
+    optimizer.load_state_dict(torch.load(config.model_checkpoint)['optimizer'])
+    return optimizer
+
+def get_scheduler(optimizer, config):
+    scheduler_config = config.scheduler
+    scheduler_type = scheduler_config['type']
+    if scheduler_type == 'CosineAnnealingLR':
+        scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=scheduler_config['T_max'])
+    else:
+        raise ValueError(f"Unsupported scheduler type: {scheduler_type}")
+    
+    scheduler.load_state_dict(torch.load(config.model_checkpoint)['scheduler'])
+    return scheduler
+
 def eval_model(model, eval_data_loader, device):
     model.eval()
     total_eval_loss = 0.0
+    corrects = 0
     with torch.no_grad():
         for images, labels, view1, view2, labels1, labels2 in eval_data_loader:
             res_o = model(images.to(device))
@@ -26,22 +54,37 @@ def eval_model(model, eval_data_loader, device):
             res2 = model(view2.to(device))
             loss = total_loss(res_o['logits'], res1['logits'], res2['logits'], labels.to(device), labels1.to(device), labels2.to(device))
             total_eval_loss += loss.item()
-    return total_eval_loss / len(eval_data_loader)
+
+            preds = res_o['logits'].argmax(dim=2)
+            corrects += torch.all(preds == labels.to(device), axis=1).sum().item()
+
+    return total_eval_loss / len(eval_data_loader), corrects / len(eval_data_loader) / eval_data_loader.batch_size
+
+def save_checkpoint(model, optimizer, scheduler, target):
+    torch.save({
+        'model': model.state_dict(),
+        'optimizer': optimizer.state_dict(),
+        'scheduler': scheduler.state_dict(),
+        }, target)
 
 def train(config):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = BaseVision(config).to(device)
-    # optimizer = optim.Adam(model.parameters(), lr=1e-2)
-    optimizer = optim.SGD(model.parameters(), lr=5e-3)
-    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=500)
+
+    optimizer = get_optimizer(model, config)
+    scheduler = get_scheduler(optimizer, config)
 
     writer = SummaryWriter(log_dir=config.global_workdir)
 
     train_loader = get_data_loader(config.dataset_root, config.dataset_train_labels, batch_size=ifnone(config.dataset_train_batch_size, 16))
-    eval_loader = get_data_loader(config.dataset_root, config.dataset_test_labels, batch_size=ifnone(config.dataset_train_batch_size, 16))
+    eval_loader = get_data_loader(config.dataset_root, config.dataset_test_labels, batch_size=ifnone(config.dataset_test_batch_size, 64))
+
+    checkpoints_dir = os.path.join(config.global_workdir, 'checkpoints')
+    if not os.path.exists(checkpoints_dir):
+        os.makedirs(checkpoints_dir)
 
     step = 1
-    for epoch in range(10):
+    for epoch in range(config.training_epochs):
         model.train()
         for images, labels, view1, view2, labels1, labels2 in train_loader:
             res_o = model(images.to(device))
@@ -59,27 +102,29 @@ def train(config):
             optimizer.step()
             scheduler.step()
 
-            logging.info(f'Step {step+1}, Loss: {loss.item()}, Rec_Loss: {rec_loss.item()}, Clr_Loss: {clr_loss.item()}, Learning Rate: {scheduler.get_last_lr()[0]}')
+            logging.info(f'Step {step}, Loss: {loss.item()}, Rec_Loss: {rec_loss.item()}, Clr_Loss: {clr_loss.item()}, Learning Rate: {scheduler.get_last_lr()[0]}')
             
             writer.add_scalar('Loss/total_loss', loss.item(), step)
             writer.add_scalar('Loss/rec_loss', rec_loss.item(), step)
             writer.add_scalar('Loss/clr_loss', clr_loss.item(), step)
             writer.add_scalar('Learning Rate', scheduler.get_last_lr()[0], step)
 
-            if step % 2000 == 0:
-                torch.save(model.state_dict(), f'checkpoints/model_step_{step+1}.pth')
-                logging.info(f'Model saved at step {step+1}')
+            if step % config.training_save_iters == 0:
+                save_checkpoint(model, optimizer, scheduler, os.path.join(checkpoints_dir, f'step_{step}.pth'))
+                logging.info(f'Model saved at step {step}')
 
-            if step % 10000 == 0:
-                eval_loss = eval_model(model, eval_loader, device)
-                logging.info(f'Step {step+1}, Evaluation Loss: {eval_loss}')
-                torch.save(model.state_dict(), f'checkpoints/model_step_{step+1}.pth')
-                logging.info(f'Model saved at step {step+1}')
+            if step % config.training_eval_iters == 0:
+                eval_loss, acc = eval_model(model, eval_loader, device)
+                writer.add_scalar('Evaluation/Loss', eval_loss, step)
+                writer.add_scalar('Evaluation/Accuracy', acc, step)
+                logging.info(f'Step {step}, Evaluation Loss: {eval_loss}, Accuracy: {acc}')
+                save_checkpoint(model, optimizer, scheduler, os.path.join(checkpoints_dir, f'step_{step}_eval_{eval_loss}_acc_{acc}.pth'))
+                logging.info(f'Model saved at step {step}')
 
             step += 1
         
         print(f'Epoch {epoch+1}, Loss: {loss.item()}')
-        torch.save(model.state_dict(), f'checkpoints/model_{epoch+1}_{loss.item()}.pth')
+        save_checkpoint(model, optimizer, scheduler, os.path.join(checkpoints_dir, f'epoch_{epoch+1}.pth'))
         
     writer.close()
 
@@ -89,5 +134,5 @@ if __name__ == '__main__':
     Logger.init(config.global_workdir, config.global_name, config.global_phase)
     Logger.enable_file()
     logging.info(config)
-    train(args, config)
+    train(config)
     

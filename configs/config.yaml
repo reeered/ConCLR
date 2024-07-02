@@ -1,6 +1,6 @@
 global:
-  name: ConCLR_SGD_5e-3
-  phase: train
+  name: ConCLR_Adam_1e-4_Tmax16000
+  phase: test
   workdir: runs
   seed: ~
  
@@ -8,21 +8,11 @@ dataset:
   root: 'data/mnt/ramdisk/max/90kDICT32px'
   train: {
     labels: 'data/mnt/ramdisk/max/90kDICT32px/annotation_train_ml13.txt',
-    roots: ['data/training/MJ/MJ_train/', 
-            'data/training/MJ/MJ_test/', 
-            'data/training/MJ/MJ_valid/', 
-            'data/training/ST'],
     batch_size: 8
   }
   test: {
     labels: 'data/mnt/ramdisk/max/90kDICT32px/annotation_test_ml13.txt',
-    roots: ['data/evaluation/IIIT5k_3000', 
-            'data/evaluation/SVT', 
-            'data/evaluation/SVTP',
-            'data/evaluation/IC13_857',
-            'data/evaluation/IC15_1811',
-            'data/evaluation/CUTE80'],
-    batch_size: 384
+    batch_size: 256
   }
   multiscales: False
   num_workers: 14
@@ -35,18 +25,13 @@ training:
 
 optimizer:
   type: Adam
-  true_wd: False
-  wd: 0.0
-  bn_wd: False
-  clip_grad: 20
   lr: 0.0001
-  args: {
-    betas: !!python/tuple [0.9, 0.999], # for default Adam 
-  }
-  scheduler: {
-    periods: [6, 4],
-    gamma: 0.1,
-  }
+  args: 
+    betas: !!python/tuple [0.9, 0.999] # for default Adam 
+
+scheduler:
+  type: CosineAnnealingLR
+  T_max: 16000
 
 model:
   checkpoint: checkpoints/best-pretrain-vision-model.pth

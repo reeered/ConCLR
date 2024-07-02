@@ -58,14 +58,6 @@ tensorboard --logdir=runs/{experiment_name}
 
 Then, open your web browser and go to `http://localhost:6006`.
 
-## Troubleshooting
-
-If you encounter any issues, please check the following:
-
-1. Ensure all dependencies are installed correctly.
-2. Verify the dataset is placed in the correct directory and is properly formatted.
-3. Check the configuration file `config.yaml` for any discrepancies.
-
 ## Acknowledgements
 
 This project is based on the ABINet (Autonomous, Bidirectional and Iterative) codebase. Thank the authors for providing their implementation and making it publicly available.
