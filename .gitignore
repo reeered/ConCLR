@@ -5,3 +5,4 @@ venv
 checkpoints/*
 runs
 data/*
+configs/train_config.yaml

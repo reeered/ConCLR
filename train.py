@@ -29,7 +29,10 @@ def get_optimizer(model, config):
     else:
         raise ValueError(f"Unsupported optimizer type: {optimizer_type}")
     
-    optimizer.load_state_dict(torch.load(config.model_checkpoint)['optimizer'])
+    # optimizer.load_state_dict(torch.load(config.model_checkpoint)['optimizer'])
+    state = torch.load(config.model_checkpoint)
+    if 'optimizer' in state:
+        optimizer.load_state_dict(state['optimizer'])
     return optimizer
 
 def get_scheduler(optimizer, config):
@@ -40,10 +43,12 @@ def get_scheduler(optimizer, config):
     else:
         raise ValueError(f"Unsupported scheduler type: {scheduler_type}")
     
-    scheduler.load_state_dict(torch.load(config.model_checkpoint)['scheduler'])
+    state = torch.load(config.model_checkpoint)
+    if 'scheduler' in state:
+        scheduler.load_state_dict(state['scheduler'])
     return scheduler
 
-def eval_model(model, eval_data_loader, device):
+def eval_model(model, eval_data_loader, device, omega, tau, lambda_):
     model.eval()
     total_eval_loss = 0.0
     corrects = 0
@@ -52,7 +57,7 @@ def eval_model(model, eval_data_loader, device):
             res_o = model(images.to(device))
             res1 = model(view1.to(device))
             res2 = model(view2.to(device))
-            loss = total_loss(res_o['logits'], res1['logits'], res2['logits'], labels.to(device), labels1.to(device), labels2.to(device))
+            loss = total_loss(res_o['logits'], res1['logits'], res2['logits'], labels.to(device), labels1.to(device), labels2.to(device), omega=omega, tau=tau, lambda_=lambda_)
             total_eval_loss += loss.item()
 
             preds = res_o['logits'].argmax(dim=2)
@@ -83,7 +88,13 @@ def train(config):
     if not os.path.exists(checkpoints_dir):
         os.makedirs(checkpoints_dir)
 
-    step = 1
+    omega = ifnone(config.loss_args_omega, 0.5)
+    tau = ifnone(config.loss_args_tau, 2.0)
+    # lambda_ = 0.2
+    lambda_ = ifnone(config.loss_args_lambda, 0.2)
+
+    # step = 1
+    step = 0  # For test
     for epoch in range(config.training_epochs):
         model.train()
         for images, labels, view1, view2, labels1, labels2 in train_loader:
@@ -91,12 +102,11 @@ def train(config):
             res1 = model(view1.to(device))
             res2 = model(view2.to(device))
         
-            rec_loss = recognition_loss(res_o['logits'], res1['logits'], res2['logits'], labels.to(device), labels1.to(device), labels2.to(device))
-            clr_loss = contrastive_loss(res1['logits'], res2['logits'], labels1.to(device), labels2.to(device))
+            rec_loss = recognition_loss(res_o['logits'], res1['logits'], res2['logits'], labels.to(device), labels1.to(device), labels2.to(device), omega=omega)
+            clr_loss = contrastive_loss(res1['logits'], res2['logits'], labels1.to(device), labels2.to(device), tau=tau)
             
-            lambda_ = 0.2
             loss = rec_loss + lambda_ * clr_loss
-            
+
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
@@ -114,7 +124,7 @@ def train(config):
                 logging.info(f'Model saved at step {step}')
 
             if step % config.training_eval_iters == 0:
-                eval_loss, acc = eval_model(model, eval_loader, device)
+                eval_loss, acc = eval_model(model, eval_loader, device, omega, tau, lambda_)
                 writer.add_scalar('Evaluation/Loss', eval_loss, step)
                 writer.add_scalar('Evaluation/Accuracy', acc, step)
                 logging.info(f'Step {step}, Evaluation Loss: {eval_loss}, Accuracy: {acc}')

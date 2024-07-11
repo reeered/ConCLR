@@ -2,14 +2,19 @@ import time
 import torch
 import torch.nn.functional as F
 
-def recognition_loss(logits_o, logits1, logits2, labels_o, labels1, labels2, omega=0.5):
+# calculate recognition loss with iteration
+def recognition_loss_o(logits_o, logits1, logits2, labels_o, labels1, labels2, omega=0.5):
     loss_o, loss1, loss2, bs = 0.0, 0.0, 0.0, logits_o.size(0)
     for i in range(bs):
-        loss_o += F.cross_entropy(logits_o[i], labels_o[i])
-        loss1 += F.cross_entropy(logits1[i], labels1[i])
-        loss2 += F.cross_entropy(logits2[i], labels2[i])
+        loss_o += F.cross_entropy(logits_o[i], labels_o[i], reduction='sum')
+        loss1 += F.cross_entropy(logits1[i], labels1[i], reduction='sum')
+        loss2 += F.cross_entropy(logits2[i], labels2[i], reduction='sum')
     rec_loss = (loss_o + omega * (loss1 + loss2)) / bs
     return rec_loss
+
+# calculate recognition loss with cross_entropy directly
+def recognition_loss(logits_o, logits1, logits2, labels_o, labels1, labels2, omega=0.5):
+    return (F.cross_entropy(logits_o.transpose(1, 2), labels_o, reduction='sum') + omega * (F.cross_entropy(logits1.transpose(1, 2), labels1, reduction='sum')) + F.cross_entropy(logits2.transpose(1, 2), labels2, reduction='sum')) / logits_o.size(0)
 
 # calculate contrastive loss with iteration
 def contrastive_loss_o(logits1, logits2, labels1, labels2, tau=2.0):
@@ -93,10 +98,23 @@ if __name__ == '__main__':
     bs = 2
     ll = 4
     cc = 2
+    test_logits_o = torch.randn(bs, int(ll/2), cc)
+    test_labels_o = torch.randint(cc, (bs, int(ll/2)))
     test_logits1 = torch.randn(bs, ll, cc)
-    test_labels1 = torch.randint(bs, (bs, ll))
+    test_labels1 = torch.randint(cc, (bs, ll))
     test_logits2 = torch.randn(bs, ll, cc)
-    test_labels2 = torch.randint(bs, (bs, ll))
+    test_labels2 = torch.randint(cc, (bs, ll))
+    
+    start = time.time()
+    rec_loss_o = recognition_loss_o(test_logits_o, test_logits1, test_logits2, test_labels_o, test_labels1, test_labels2)
+    end = time.time()
+    print(f'recognition_loss_o time used: {end - start}, loss: {rec_loss_o}')
+    
+    start = time.time()
+    rec_loss = recognition_loss(test_logits_o, test_logits1, test_logits2, test_labels_o, test_labels1, test_labels2)
+    end = time.time()
+    print(f'recognition_loss time used: {end - start}, loss: {rec_loss}')
+    assert rec_loss_o.item() == rec_loss.item()
 
     test_logits1 = torch.tensor([[[1.0, 2.0], [2.0, 3.0]], 
                             [[3.0, 4.0], [7.0, 5.0]]])

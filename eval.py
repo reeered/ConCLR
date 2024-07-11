@@ -11,20 +11,21 @@ def parse_args():
     parser = argparse.ArgumentParser(description='Evaluate a model for vision task')
     parser.add_argument('--config', type=str, default='configs/config.yaml', help='Path to config file (default: configs/config.yaml)')
     parser.add_argument('--checkpoint', type=str, help='Path to model checkpoint (if not provided, will use config value)')
+    parser.add_argument('--conclr_checkpoint', type=str, help='Path to conclr model checkpoint')
     args = parser.parse_args()
     return args
 
 def calculate_accuracy(logits, labels):
-    charset = CharsetMapper('data/charset_36.txt')
     preds = logits.argmax(dim=2)
     corrects = torch.all(preds == labels, axis=1).sum().item()
     total = labels.size(0)
+    charset = CharsetMapper('data/charset_36.txt')
     for pred, label in zip(preds, labels):
         pred = charset.get_text(pred).replace('\u2591', ' ')
         label = charset.get_text(label).replace('\u2591', ' ')
         logging.info(f'Pred: {pred}, Label: {label}')
-    print(corrects, total)
     acc = corrects / total
+    print(f'Corrects: {corrects}, Total: {total}, Acc: {acc}')
     return corrects, acc
 
 def eval_model(model_baseline, model_conclr, eval_data_loader, device, num_batches=20000):
@@ -59,11 +60,14 @@ def eval_model(model_baseline, model_conclr, eval_data_loader, device, num_batch
 def main(config):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-    conclr_checkpoint = 'runs/ConCLR_Adam_1e-4_Tmax16000/checkpoints/step_18000_eval_19.213118076324463_acc_0.8447265625.pth'
+    #TODO: checkpoint
+    if args.checkpoint:
+        config.model_checkpoint = args.checkpoint
+    conclr_checkpoint = args.conclr_checkpoint
 
     model_baseline = BaseVision(config).to(device)
     model_conclr = BaseVision(config).to(device)
-    model_conclr.load_state_dict(torch.load(conclr_checkpoint))
+    model_conclr.load_state_dict(torch.load(conclr_checkpoint)['model'])
 
     eval_loader = get_data_loader(config.dataset_root, config.dataset_test_labels, batch_size=ifnone(config.dataset_test_batch_size, 16), conaug=False)
 
@@ -77,8 +81,5 @@ if __name__ == '__main__':
     Logger.enable_file()
     logging.info(config)
 
-    #TODO: checkpoint
-    if args.checkpoint:
-        config.model_checkpoint = args.checkpoint
-
-    main(config)
+    main(config, args)
+    

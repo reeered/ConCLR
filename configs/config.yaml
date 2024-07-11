@@ -1,6 +1,6 @@
 global:
-  name: ConCLR_Adam_1e-4_Tmax16000
-  phase: test
+  name: ConCLR
+  phase: train
   workdir: runs
   seed: ~
  
@@ -39,3 +39,10 @@ model:
   attention: 'position'
   backbone: 'transformer'
   backbone_ln: 3
+
+loss:
+  type: 'ConCLR Loss'
+  args: 
+    omega: 0.5
+    tau: 2.0
+    lambda: 0.2

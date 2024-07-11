@@ -191,9 +191,10 @@ class ConCLRDataset(Dataset):
         self.data_dir = data_dir
         self.transform = transform
         self.images, self.labels = [], []
-        with open(labels_path, 'r') as f:
+        with open(labels_path, 'r', encoding='utf8') as f:
             lines = f.readlines()
 
+        # MJSynth
         for line in lines:
             parts = line.strip().split()
             assert len(parts) == 2
@@ -202,6 +203,14 @@ class ConCLRDataset(Dataset):
             self.images.append(os.path.join(data_dir, img_file))
             self.labels.append(label)
 
+        # # Other datasets
+        # for line in lines:
+        #     parts = line.strip().split()
+        #     assert len(parts) == 2
+        #     img_file, label = parts
+        #     self.images.append(os.path.join(data_dir, img_file))
+        #     self.labels.append(label)
+
         self.charset = CharsetMapper(charset_path, max_length=max_length)
 
     def __len__(self):
@@ -209,18 +218,11 @@ class ConCLRDataset(Dataset):
     
     def __getitem__(self, idx):
         img_path = self.images[idx]
-        # img_path = os.path.join(self.data_dir, self.images[idx])
+
         try:
             image = Image.open(img_path).convert('RGB')
-        except OSError as e:
-            #TODO: 数据集有部分图像损坏
-            logging.error(e)
-            logging.error(f'Broken image: {img_path}')
-            image = Image.open(self.images[idx+1]).convert('RGB')
-            label = self.charset.get_labels(self.labels[idx+1], padding=False)
-            label = torch.tensor(label).to(dtype=torch.long)
-            return self.transform(image), label
-            # raise Exception(f'Broken image: {img_path}')
+        except Exception as e:
+            raise Exception(f"Error opening image {img_path}: {e}")
 
         # original text
         text = self.labels[idx]
