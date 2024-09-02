@@ -5,6 +5,7 @@ import os
 import torch
 import torch.optim as optim
 from torch.utils.tensorboard import SummaryWriter
+from tqdm import tqdm
 
 from models.model_vision import BaseVision
 from utils import get_data_loader
@@ -28,11 +29,11 @@ def get_optimizer(model, config):
         optimizer = optim.SGD(model.parameters(), lr=optimizer_config['lr'])
     else:
         raise ValueError(f"Unsupported optimizer type: {optimizer_type}")
-    
-    # optimizer.load_state_dict(torch.load(config.model_checkpoint)['optimizer'])
-    state = torch.load(config.model_checkpoint)
-    if 'optimizer' in state:
+        
+    state = torch.load(config.model_checkpoint) if config.model_checkpoint else None
+    if state and 'optimizer' in state:
         optimizer.load_state_dict(state['optimizer'])
+
     return optimizer
 
 def get_scheduler(optimizer, config):
@@ -43,9 +44,10 @@ def get_scheduler(optimizer, config):
     else:
         raise ValueError(f"Unsupported scheduler type: {scheduler_type}")
     
-    state = torch.load(config.model_checkpoint)
-    if 'scheduler' in state:
+    state = torch.load(config.model_checkpoint) if config.model_checkpoint else None
+    if state and 'scheduler' in state:
         scheduler.load_state_dict(state['scheduler'])
+    
     return scheduler
 
 def eval_model(model, eval_data_loader, device, omega, tau, lambda_):
@@ -53,7 +55,7 @@ def eval_model(model, eval_data_loader, device, omega, tau, lambda_):
     total_eval_loss = 0.0
     corrects = 0
     with torch.no_grad():
-        for images, labels, view1, view2, labels1, labels2 in eval_data_loader:
+        for images, labels, view1, view2, labels1, labels2 in tqdm(eval_data_loader):
             res_o = model(images.to(device))
             res1 = model(view1.to(device))
             res2 = model(view2.to(device))
@@ -93,11 +95,10 @@ def train(config):
     # lambda_ = 0.2
     lambda_ = ifnone(config.loss_args_lambda, 0.2)
 
-    # step = 1
-    step = 0  # For test
+    step = 1
     for epoch in range(config.training_epochs):
         model.train()
-        for images, labels, view1, view2, labels1, labels2 in train_loader:
+        for images, labels, view1, view2, labels1, labels2 in tqdm(train_loader):
             res_o = model(images.to(device))
             res1 = model(view1.to(device))
             res2 = model(view2.to(device))
@@ -111,13 +112,14 @@ def train(config):
             loss.backward()
             optimizer.step()
             scheduler.step()
-
-            logging.info(f'Step {step}, Loss: {loss.item()}, Rec_Loss: {rec_loss.item()}, Clr_Loss: {clr_loss.item()}, Learning Rate: {scheduler.get_last_lr()[0]}')
             
-            writer.add_scalar('Loss/total_loss', loss.item(), step)
-            writer.add_scalar('Loss/rec_loss', rec_loss.item(), step)
-            writer.add_scalar('Loss/clr_loss', clr_loss.item(), step)
-            writer.add_scalar('Learning Rate', scheduler.get_last_lr()[0], step)
+            if step % config.training_show_iters == 0:
+                logging.info(f'Step {step}, Loss: {loss.item()}, Rec_Loss: {rec_loss.item()}, Clr_Loss: {clr_loss.item()}, Learning Rate: {scheduler.get_last_lr()[0]}')
+            
+                writer.add_scalar('Loss/total_loss', loss.item(), step)
+                writer.add_scalar('Loss/rec_loss', rec_loss.item(), step)
+                writer.add_scalar('Loss/clr_loss', clr_loss.item(), step)
+                writer.add_scalar('Learning Rate', scheduler.get_last_lr()[0], step)
 
             if step % config.training_save_iters == 0:
                 save_checkpoint(model, optimizer, scheduler, os.path.join(checkpoints_dir, f'step_{step}.pth'))
@@ -125,6 +127,7 @@ def train(config):
 
             if step % config.training_eval_iters == 0:
                 eval_loss, acc = eval_model(model, eval_loader, device, omega, tau, lambda_)
+                model.train()
                 writer.add_scalar('Evaluation/Loss', eval_loss, step)
                 writer.add_scalar('Evaluation/Accuracy', acc, step)
                 logging.info(f'Step {step}, Evaluation Loss: {eval_loss}, Accuracy: {acc}')
@@ -132,8 +135,8 @@ def train(config):
                 logging.info(f'Model saved at step {step}')
 
             step += 1
-        
-        print(f'Epoch {epoch+1}, Loss: {loss.item()}')
+         
+        logging.info(f'Epoch {epoch+1}, Loss: {loss.item()}')
         save_checkpoint(model, optimizer, scheduler, os.path.join(checkpoints_dir, f'epoch_{epoch+1}.pth'))
         
     writer.close()
